@@ -1,0 +1,1468 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: AWS AppSync Medical Image Search
+
+Parameters:
+  APIName:
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
+    Default: AWSMedicalImageSearch
+    Description: Name of your AppSync API
+    Type: String
+  AuthorizationUserPool:
+    Type: String 
+    Description: The Cognito User Pool used for AppSync API authorization
+  ReportBucketName:
+    Type: String
+    Default: mimic-cxr-report
+  ImageBucketName:
+    Type: String
+    Default: mimic-cxr-dicom
+  PNGBucketName:
+    Type: String
+    Description: The destination S3 bucket for PNGs, will be used in React Web UI
+  AmplifyStorageAccessLevel:
+    Type: String
+    Default: public
+    Description: Amplify storage file access levels, e.g. public, protected, private
+  ESDomain:
+    Type: String
+    Description: Elasticsearch domain name for medical image search 
+    Default: medical-image-search
+  DDBImageTableName:
+    Type: String 
+    Description: DynamoDB Table for medical image 
+    Default: medical-image-metadata
+  InferenceEndpointURL:
+    Type: String
+    Description: The inference endpoint URL from ECS container deployment
+
+Mappings: 
+  RegionMap: 
+    us-east-1:
+      LambdaBucket: medical-image-search-us-east-1
+    us-west-2:
+      LambdaBucket: medical-image-search-us-west-2
+    
+Resources:
+  ### AppSync ###
+  MedicalImageSearchApi:
+    Type: AWS::AppSync::GraphQLApi
+    Description: Medical Image SearchGraphQL API
+    Properties:
+      AuthenticationType: AMAZON_COGNITO_USER_POOLS
+      Name: !Sub ${APIName}
+      LogConfig:
+        CloudWatchLogsRoleArn: !GetAtt AppSyncServiceRole.Arn
+        FieldLogLevel: "ERROR"
+      UserPoolConfig:
+        UserPoolId: !Ref AuthorizationUserPool
+        AwsRegion: !Sub ${AWS::Region}
+        DefaultAction: "ALLOW"
+
+  MedicalImageSearchSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    DependsOn: MedicalImageSearchApi
+    Description: Medical Image Search GraphQL schema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      Definition: |
+        schema {
+          query: Query
+        }
+        type Image {
+          ImageId: String
+          ReportId: String
+          Bucket: String
+          Key: String
+          Modality: String
+          ViewPosition: String
+          BodyPartExamined: String
+        }
+        type NegativeDiagnoses {
+          doc_count: Int
+          key: String
+        }
+        type NegativeICD10CMs {
+          doc_count: Int
+          key: String
+        }
+        type NegativeSigns {
+          doc_count: Int
+          key: String
+        }
+        type NegativeSymptoms {
+          doc_count: Int
+          key: String
+        }
+        type PositiveDiagnoses {
+          doc_count: Int
+          key: String
+        }
+        type PositiveICD10CMs {
+          doc_count: Int
+          key: String
+        }
+        type PositiveSigns {
+          doc_count: Int
+          key: String
+        }
+        type PositiveSymptoms {
+          doc_count: Int
+          key: String
+        }
+        type Query {
+          getImage(ImageId: String): Image
+          getImages(ReportId: String): [Image]
+          getAllNegativeICD10CMs: [NegativeICD10CMs]
+          getAllPositiveICD10CMs: [PositiveICD10CMs]
+          getPositiveICD10CMs(input: String): [PositiveICD10CMs]
+          getNegativeICD10CMs(input: String): [NegativeICD10CMs]
+          getPositiveICD10CMsbyReports(input: String): [PositiveICD10CMs]
+          getNegativeICD10CMsbyReports(input: String): [NegativeICD10CMs]
+          getPositiveSignsbyReports(input: String): [PositiveSigns]
+          getNegativeSignsbyReports(input: String): [NegativeSigns]
+          getPositiveDiagnosesbyReports(input: String): [PositiveDiagnoses]
+          getNegativeDiagnosesbyReports(input: String): [NegativeDiagnoses]
+          getPositiveSymptomsbyReports(input: String): [PositiveSymptoms]
+          getNegativeSymptomsbyReports(input: String): [NegativeSymptoms]
+          getReport(ReportId: String): Report
+          listReports(from: Int, size: Int): [Report]
+          searchReports(input: String): [Report]
+          getSimilarImages(ImageId: String, k: Int): [Image]
+          getNegativeICD10CMsbySimilarReport(input: String): [NegativeICD10CMs]
+          getPositiveICD10CMsbySimilarReport(input: String): [PositiveICD10CMs]
+        }
+        type Report {
+          Examination: String
+          Findings: String
+          Images: [Image]
+          Impression: String
+          Indication: String
+          NegativeDiagnoses: [String]
+          NegativeICD10CMs: [String]
+          NegativeSigns: [String]
+          NegativeSymptoms: [String]
+          PositiveDiagnoses: [String]
+          PositiveICD10CMs: [String]
+          PositiveSigns: [String]
+          PositiveSymptoms: [String]
+          ReportId: String
+          Technique: String
+        }
+
+  ### DynamoDB ###
+  DDBImageTable:
+    Type: AWS::DynamoDB::Table
+    Description: Medical Image Search Image table
+    Properties:
+      TableName: !Ref DDBImageTableName
+      AttributeDefinitions:
+        - AttributeName: ImageId
+          AttributeType: S
+        - AttributeName: ReportId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ImageId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: 'ReportId-index'
+          KeySchema: 
+            - AttributeName: ReportId
+              KeyType: HASH
+          Projection: 
+            ProjectionType: ALL
+          ProvisionedThroughput: 
+            ReadCapacityUnits: 50
+            WriteCapacityUnits: 20
+      ProvisionedThroughput:
+        ReadCapacityUnits: 50
+        WriteCapacityUnits: 20
+
+  ### Elasticsearch ###
+  ESSearchDomain:
+    Type: AWS::Elasticsearch::Domain
+    Description: Elasticsearch domain to enable searching of medical image reports
+    Properties:
+      DomainName: !Ref ESDomain
+      ElasticsearchVersion: 7.4
+      ElasticsearchClusterConfig:
+        InstanceCount: 2
+        ZoneAwarenessEnabled: false
+        InstanceType: t2.small.elasticsearch
+      EBSOptions:
+        EBSEnabled: true
+        Iops: 0
+        VolumeSize: 10
+        VolumeType: gp2
+      AccessPolicies: 
+        Version: 2012-10-17
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              AWS:
+                - !GetAtt AppSyncServiceRole.Arn
+            Action:
+              - es:ESHttpDelete
+              - es:ESHttpHead
+              - es:ESHttpGet
+              - es:ESHttpPost
+              - es:ESHttpPut
+            Resource: !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${ESDomain}/*
+
+  ### AppSync Data Sources ###
+  DDBImageTableDataSource:
+    Type: AWS::AppSync::DataSource
+    DependsOn: DDBImageTable
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      Name: !Sub ${APIName}_DDB_Image
+      Description: Medical image search AppSync API data source -- DDB Image table  
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref DDBImageTable
+        AwsRegion: !Sub ${AWS::Region}
+  
+  ESDomainDataSource:
+    Type: AWS::AppSync::DataSource
+    DependsOn: ESSearchDomain
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      Name: !Sub ${APIName}_ES_Report
+      Description: Medical image search AppSync API data source -- Elasticsearch Report Domain
+      Type: AMAZON_ELASTICSEARCH
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      ElasticsearchConfig:
+        Endpoint: !Sub https://${ESSearchDomain.DomainEndpoint}
+        AwsRegion: !Sub ${AWS::Region}
+
+  LambdaDataSource:
+    Type: AWS::AppSync::DataSource
+    DependsOn: ImageKNNqueryLambdaFunction
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      Name: !Sub ${APIName}_Lambda_KNN
+      Description: Medical image search AppSync API data source -- Lambda KNN
+      Type: AWS_LAMBDA
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt ImageKNNqueryLambdaFunction.Arn
+
+  ### Resolvers ####
+  ReportImagesFieldResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Report
+      FieldName: Images
+      DataSourceName: !GetAtt DDBImageTableDataSource.Name
+      RequestMappingTemplate: |
+        {
+            "version" : "2017-02-28",
+            "operation" : "Query",
+            "index" : "ReportId-index",
+            "query" : {
+                "expression": "ReportId = :id",
+                "expressionValues" : {
+                    ":id" : $util.dynamodb.toDynamoDBJson($ctx.source.ReportId)
+                }
+            }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+
+  GetReportQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getReport
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+            "version": "2017-02-28",
+            "operation": "GET",
+            "path": "/medical-cxr-report/_doc/${context.arguments.ReportId}"
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($context.result.get("_source"))
+
+  GetImageQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getImage
+      DataSourceName: !GetAtt DDBImageTableDataSource.Name
+      RequestMappingTemplate: |
+        {
+            "version": "2017-02-28",
+            "operation": "GetItem",
+            "key": {
+                "ImageId": $util.dynamodb.toDynamoDBJson($ctx.args.ImageId)
+            }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+
+  GetImagesQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getImages
+      DataSourceName: !GetAtt DDBImageTableDataSource.Name
+      RequestMappingTemplate: |
+        {
+            "version" : "2017-02-28",
+            "operation" : "Query",
+            "index" : "ReportId-index",
+            "query" : {
+                "expression": "ReportId = :id",
+                "expressionValues" : {
+                    ":id" : $util.dynamodb.toDynamoDBJson($ctx.args.ReportId)
+                }
+            }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+
+  ListReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: listReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+            "version": "2017-02-28",
+            "operation": "GET",
+            "path": "/medical-cxr-report/_doc/_search",
+            "params": {
+                "body": {
+                    "from": ${context.arguments.from},
+                    "size": ${context.arguments.size},
+                    "query": { 
+                        "bool": {
+                          "should": [
+                            {
+                              "exists": {
+                                  "field": "Impression"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "Findings"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "PositiveSigns"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "PositiveDiagnoses"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "PositiveSymptoms"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "NegativeSigns"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "NegativeDiagnoses"
+                              }
+                            },
+                            {
+                              "exists": {
+                                  "field": "NegativeSymptoms"
+                              }
+                            }
+                          ]
+                        }
+                    }
+                }
+            }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.hits.hits)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry.get("_source"))
+            #end
+        ]
+
+  SearchReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: searchReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+            "version":"2017-02-28",
+            "operation":"GET",
+            "path":"/medical-cxr-report/_doc/_search",
+            "params":{
+                "body": {
+                    "from": 0,
+                    "size": 20,
+                    "query": {
+                        "multi_match" :{
+                            "query":"${context.arguments.input}",
+                            "fields": ["Findings", "Impression"]
+                        }
+                    }
+                }
+            }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.hits.hits)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry.get("_source"))
+            #end
+        ]
+
+  GetPositiveICD10CMsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getPositiveICD10CMs
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "multi_match" :{
+                          "query":"${context.arguments.input}",
+                          "fields": ["Findings", "Impression"]
+                      }
+                  },
+                  "aggs" : {
+                    "PositiveICD10CMs" : {
+                        "terms" : { "field" : "PositiveICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetNegativeICD10CMsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getNegativeICD10CMs
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "multi_match" :{
+                          "query":"${context.arguments.input}",
+                          "fields": ["Findings", "Impression"]
+                      }
+                  },
+                  "aggs" : {
+                    "NegativeICD10CMs" : {
+                        "terms" : { "field" : "NegativeICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetAllPositiveICD10CMsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getAllPositiveICD10CMs
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "aggs" : {
+                    "PositiveICD10CMs" : {
+                        "terms" : { "field" : "PositiveICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetAllNegativeICD10CMsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getAllNegativeICD10CMs
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "aggs" : {
+                    "NegativeICD10CMs" : {
+                        "terms" : { "field" : "NegativeICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetPositiveICD10CMsbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getPositiveICD10CMsbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "PositiveICD10CMs" : {
+                        "terms" : { "field" : "PositiveICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetNegativeICD10CMsbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getNegativeICD10CMsbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "NegativeICD10CMs" : {
+                        "terms" : { "field" : "NegativeICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetPositiveSignsbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getPositiveSignsbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "PositiveSigns" : {
+                        "terms" : { "field" : "PositiveSigns"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveSigns.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetNegativeSignsbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getNegativeSignsbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "NegativeSigns" : {
+                        "terms" : { "field" : "NegativeSigns"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeSigns.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetPositiveDiagnosesbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getPositiveDiagnosesbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "PositiveDiagnoses" : {
+                        "terms" : { "field" : "PositiveDiagnoses"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveDiagnoses.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetNegativeDiagnosesbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getNegativeDiagnosesbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "NegativeDiagnoses" : {
+                        "terms" : { "field" : "NegativeDiagnoses"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeDiagnoses.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetPositiveSymptomsbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getPositiveSymptomsbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "PositiveSymptoms" : {
+                        "terms" : { "field" : "PositiveSymptoms"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveSymptoms.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetNegativeSymptomsbyReportsQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getNegativeSymptomsbyReports
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "terms" :{
+                          "ReportId": ${context.arguments.input}
+                      }
+                  },
+                  "aggs" : {
+                    "NegativeSymptoms" : {
+                        "terms" : { "field" : "NegativeSymptoms"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeSymptoms.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetSimilarImagesQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getSimilarImages
+      DataSourceName: !GetAtt LambdaDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version" : "2017-02-28",
+          "operation": "Invoke",
+          "payload": $util.toJson($context.args)
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($context.result['results'])
+
+
+  GetPositiveICD10CMsbySimilarReportQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getPositiveICD10CMsbySimilarReport
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "more_like_this" : {
+                          "fields" : ["Impression", "Findings"],
+                          "like" : [{
+                              "_index" : "medical-cxr-report",
+                              "_id" : "${context.arguments.input}"
+                          }],
+                          "min_term_freq" : 1,
+                          "max_query_terms" : 12
+                      }
+                  },
+                  "aggs" : {
+                    "PositiveICD10CMs" : {
+                        "terms" : { "field" : "PositiveICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.PositiveICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+  GetNegativeICD10CMsbySimilarReportQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MedicalImageSearchSchema
+    Properties:
+      ApiId: !GetAtt MedicalImageSearchApi.ApiId
+      TypeName: Query
+      FieldName: getNegativeICD10CMsbySimilarReport
+      DataSourceName: !GetAtt ESDomainDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version":"2017-02-28",
+          "operation":"GET",
+          "path":"/medical-cxr-report/_doc/_search",
+          "params":{
+              "body": {
+                  "size": 0,
+                  "query": {
+                      "more_like_this" : {
+                          "fields" : ["Impression", "Findings"],
+                          "like" : [{
+                              "_index" : "medical-cxr-report",
+                              "_id" : "${context.arguments.input}"
+                          }],
+                          "min_term_freq" : 1,
+                          "max_query_terms" : 12
+                      }
+                  },
+                  "aggs" : {
+                    "NegativeICD10CMs" : {
+                        "terms" : { "field" : "NegativeICD10CMs"} 
+                    }
+                  }
+              }
+          }
+        }
+      ResponseMappingTemplate: |
+        [
+            #foreach($entry in $context.result.aggregations.NegativeICD10CMs.buckets)
+                #if( $velocityCount > 1 ) , #end
+                $util.toJson($entry)
+            #end
+        ]
+
+
+  ### AppSync IAM ###
+  AppSyncServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${APIName}-appsync-service-role
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+  LambdaInvokePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: appsync-medical-image-search-lambda-policy
+      Roles:
+        - !Ref AppSyncServiceRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - lambda:*
+            Resource: '*'
+  AppSyncDDBPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: DDBImageTable
+    Properties:
+      PolicyName: appsync-medical-image-search-ddb-policy
+      Roles:
+        - !Ref AppSyncServiceRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource:
+              - !Join [ "", [ !GetAtt DDBImageTable.Arn, "*" ] ]
+  AppSyncDDBBatchPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: DDBImageTable
+    Properties:
+      PolicyName: appsync-medical-image-search-ddb-batch-policy
+      Roles:
+        - !Ref AppSyncServiceRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource:
+              - !GetAtt DDBImageTable.Arn
+  ESAccessPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: ESSearchDomain
+    Properties:
+      PolicyName: appsync-medical-image-search-es-policy
+      Roles:
+        - !Ref AppSyncServiceRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - es:ESHttpDelete
+              - es:ESHttpHead
+              - es:ESHttpGet
+              - es:ESHttpPost
+              - es:ESHttpPut
+            Resource:
+              - !Sub ${ESSearchDomain.DomainArn}/*
+              - !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${ESDomain}
+
+  ### Medical Report Bucket and Lambda function ###
+  ReportBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ReportBucketName}-${AWS::AccountId}
+  ReportLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CMprocessLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt ReportBucket.Arn
+  CMprocessLambdaFunctionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: 'S3Notification'
+                Effect: Allow
+                Action:
+                  - s3:GetBucketNotification
+                  - s3:PutBucketNotification
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ReportBucket.Arn
+                  - !Join
+                    - ''
+                    - - !GetAtt ReportBucket.Arn
+                      - /*
+              - Sid: 'LogGroup'
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'
+              - Sid: Others
+                Effect: Allow
+                Action: 
+                  - dynamodb:*
+                  - es:*
+                  - comprehend:*
+                  - comprehendmedical:*
+                Resource: '*'
+  LambdaDependencyLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.6
+        - python3.7
+      Content:
+        S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", LambdaBucket]
+        S3Key: python.zip 
+      Description: Dependencies for Lambda functions
+      LayerName: lambda-dependency-layer
+  CMprocessLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaDependencyLayer
+    Properties:
+      Description: a lambda function that transform the free text into searchable named entities using Amazon Comprehend Medical and index them in Elasticsearch
+      Role: !GetAtt CMprocessLambdaFunctionRole.Arn
+      Handler: index.lambda_handler
+      Runtime: python3.6
+      Layers: 
+        - !Ref LambdaDependencyLayer
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          awsregion: !Sub ${AWS::Region}
+          esendpoint: !Sub ${ESSearchDomain.DomainEndpoint}
+          esindex: 'medical-cxr-report'
+      Code:
+        S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", LambdaBucket]
+        S3Key: lambda.zip
+          
+  LambdaIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetBucketNotification'
+                  - 's3:PutBucketNotification'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+  CustomResourceLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaIAMRole.Arn
+      Code:
+        ZipFile: |
+            from __future__ import print_function
+            import json
+            import boto3
+            import cfnresponse
+            
+            SUCCESS = "SUCCESS"
+            FAILED = "FAILED"
+            
+            print('Loading function')
+            s3 = boto3.resource('s3')
+            
+            def lambda_handler(event, context):
+                print("Received event: " + json.dumps(event, indent=2))
+                responseData={}
+                try:
+                    if event['RequestType'] == 'Delete':
+                        print("Request Type:",event['RequestType'])
+                        Bucket=event['ResourceProperties']['Bucket']
+                        delete_notification(Bucket)
+                        print("Sending response to custom resource after Delete")
+                    elif event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+                        print("Request Type:",event['RequestType'])
+                        LambdaArn=event['ResourceProperties']['LambdaArn']
+                        Bucket=event['ResourceProperties']['Bucket']
+                        add_notification(LambdaArn, Bucket)
+                        responseData={'Bucket':Bucket}
+                        print("Sending response to custom resource")
+                    responseStatus = 'SUCCESS'
+                except Exception as e:
+                    print('Failed to process:', e)
+                    responseStatus = 'FAILED'
+                    responseData = {'FAILED': 'Something bad happened.'}
+                cfnresponse.send(event, context, responseStatus, responseData)
+
+            def add_notification(LambdaArn, Bucket):
+                bucket_notification = s3.BucketNotification(Bucket)
+                response = bucket_notification.put(
+                  NotificationConfiguration={
+                    'LambdaFunctionConfigurations': [
+                      {
+                          'LambdaFunctionArn': LambdaArn,
+                          'Events': [
+                              's3:ObjectCreated:*'
+                          ]
+                      }
+                    ]
+                  }
+                )
+                print("Put request completed....")
+              
+            def delete_notification(Bucket):
+                bucket_notification = s3.BucketNotification(Bucket)
+                response = bucket_notification.put(
+                    NotificationConfiguration={}
+                )
+                print("Delete request completed....")
+      Runtime: python3.6
+      Timeout: 50
+  ReportLambdaTrigger:
+    Type: 'Custom::LambdaTrigger'
+    DependsOn: ReportLambdaInvokePermission
+    Properties:
+      ServiceToken: !GetAtt CustomResourceLambdaFunction.Arn
+      LambdaArn: !GetAtt CMprocessLambdaFunction.Arn
+      Bucket: !Ref ReportBucket
+
+  ### medical image S3 bucket and Lambda function ###
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ImageBucketName}-${AWS::AccountId}
+  ImageLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ImageProcessLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt ImageBucket.Arn
+  ImageProcessLambdaFunctionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: 'S3Notification'
+                Effect: Allow
+                Action:
+                  - s3:GetBucketNotification
+                  - s3:PutBucketNotification
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ImageBucket.Arn
+                  - !Join
+                    - ''
+                    - - !GetAtt ImageBucket.Arn
+                      - /*
+              - Sid: 'LogGroup'
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'
+              - Sid: Others
+                Effect: Allow
+                Action: 
+                  - es:*
+                  - dynamodb:*
+                Resource: '*'
+  ImageProcessLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: a lambda function that process the DICOM image through a image featurization API call index them in Elasticsearch
+      Role: !GetAtt ImageProcessLambdaFunctionRole.Arn
+      Handler: index.lambda_handler
+      Runtime: python3.6
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          awsregion: !Sub ${AWS::Region}
+          endpoint_url: !Ref InferenceEndpointURL
+          destination: !Ref PNGBucketName
+          ddbtable: !Ref DDBImageTableName
+          esendpoint: !Sub ${ESSearchDomain.DomainEndpoint}
+          storageaccesslevel: !Ref AmplifyStorageAccessLevel
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          from urllib.parse import unquote_plus
+          import urllib3
+          http = urllib3.PoolManager()
+          region  = os.environ['awsregion']
+          s3client = boto3.client('s3')
+          def lambda_handler(event, context):
+              try:
+                  cred = boto3.Session().get_credentials()
+                  for record in event['Records']:
+                      bucket = record['s3']['bucket']['name']
+                      key = unquote_plus(record['s3']['object']['key'])
+                      body = {
+                          'dicombucket': bucket,
+                          'dicomkey': key,
+                          'ddb_table': os.environ['ddbtable'],
+                          'es_endpoint': os.environ['esendpoint'],
+                          'pngbucket': os.environ['destination'],
+                          'prefix': os.environ['storageaccesslevel']
+                      }
+                      logger.info('Post inference request body: {}'.format(json.dumps(body)))
+                      response = http.request(
+                          'POST',
+                          os.environ['endpoint_url'],
+                          fields = body
+                      )
+                      logger.info('POST inference API response: {}'.format(response.data.decode('utf-8')))
+              except Exception as E:
+                  print("Error: ",E)
+  ImageLambdaTrigger:
+    Type: 'Custom::LambdaTrigger'
+    DependsOn: ImageLambdaInvokePermission
+    Properties:
+      ServiceToken: !GetAtt CustomResourceLambdaFunction.Arn
+      LambdaArn: !GetAtt ImageProcessLambdaFunction.Arn
+      Bucket: !Ref ImageBucket
+
+  ImageKNNqueryLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaDependencyLayer
+    Properties:
+      Description: a lambda function that query the KNN in ES
+      Role: !GetAtt ImageProcessLambdaFunctionRole.Arn
+      Handler: index.lambda_handler
+      Runtime: python3.6
+      MemorySize: 512
+      Timeout: 60
+      Layers: 
+        - !Ref LambdaDependencyLayer
+      Environment:
+        Variables:
+          awsregion: !Sub ${AWS::Region}
+          esendpoint: !Sub ${ESSearchDomain.DomainEndpoint}
+          esindex: 'visual-search-knn'
+          ddb_table: !Ref DDBImageTableName
+          ddb_index: 'ReportId-index'
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import re
+          import sys
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          from urllib.parse import unquote_plus
+          from elasticsearch import Elasticsearch, RequestsHttpConnection
+          from requests_aws4auth import AWS4Auth
+          esendpoint = os.environ['esendpoint']
+          esindex  = os.environ['esindex']
+          region  = os.environ['awsregion']
+          ddbtable = os.environ['ddb_table']
+          ddbindex = os.environ['ddb_index']
+          def lambda_handler(event, context):
+              try:
+                  imageid = event['ImageId']
+                  k = event['k']
+                  cred = boto3.Session().get_credentials()
+                  awsauth = AWS4Auth(cred.access_key, cred.secret_key, region, 'es', session_token=cred.token)
+                  esclient = Elasticsearch(hosts=[{'host': esendpoint}],scheme="https",port=443,http_auth=awsauth,connection_class=RequestsHttpConnection)
+                  logger.info('Connected to {0}'.format(esendpoint))
+                  res = esclient.get(index=esindex, id=imageid)
+                  query = res['_source']['feature_vector']
+                  res = esclient.search(
+                      request_timeout=30, 
+                      index=esindex,
+                      body={
+                          'size': k, 
+                          'query': {'knn': {'feature_vector': {'vector': query, 'k': k}}}
+                      }
+                  )
+                  ddb_client = boto3.client('dynamodb')
+                  response = ddb_client.batch_get_item(
+                      RequestItems={
+                          ddbtable: {
+                              'Keys': [{'ImageId': {'S': hit['_id']}} for hit in res['hits']['hits']]
+                          }
+                      }
+                  )
+                  logger.info('Number of KNN candidates: {}'.format(len(response['Responses'][ddbtable])))
+              except Exception as E:
+                  print("Error: ",E)
+              if response is not None and 'Responses' in response:
+                  images = [{'ImageId': obj['ImageId']['S'], 'Bucket': obj['Bucket']['S'], 'Key': obj['Key']['S'], 'ReportId': obj['ReportId']['S'], 'Modality': obj['Modality']['S'], 'BodyPartExamined': obj['BodyPartExamined']['S'], 'ViewPosition': obj['ViewPosition']['S']} for obj in response['Responses'][ddbtable]]
+              else:
+                  images = []
+              return {
+                  'statusCode': response['ResponseMetadata']['HTTPStatusCode'],
+                  'results': images
+              }
+
+Outputs:
+  ApiEndpoint:
+    Description: GraphQL Endpoint
+    Value: !GetAtt MedicalImageSearchApi.GraphQLUrl
+  ApiId:
+    Description: GraphQL API ID
+    Value: !GetAtt MedicalImageSearchApi.ApiId
+    Export:
+      Name: !Sub "${APIName}-API-ID"
+  ElasticsearchDomain:
+    Description: Elasticsearch Domain
+    Value: !Sub https://${ESSearchDomain.DomainEndpoint}
+
+
