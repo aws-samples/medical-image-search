@@ -1,16 +1,16 @@
 ## Medical Image Search
 
 ## Demo Web UI
-![Demo](Figures/demo.gif=250x)
+![Demo](Figures/demo.gif)
 
 ## Overview Architecture
-![Architecture](Figures/architecture.jpg=250x)
+![Architecture](Figures/architecture.jpg)
 
 
 ## Deployment Steps
 
 ### Step 1: Deploy Amplify React Web App
-![Step1](Figures/step1.jpg=100x)
+![Step1](Figures/step1.jpg)
 
 Install AWS Amplify CLI:  
 `npm install -g @aws-amplify/cli@4.13.2`
