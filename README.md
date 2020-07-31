@@ -70,8 +70,8 @@ Take a note of the followings:
 - Cognito User Pool ID as the Amplify Auth backend. 
 - S3 bucket name as the Amplify Storage backend. 
 Both of them can be found in the Output tab of the correspending CFN nested stack deployment:  
-![Nested CFN Stack Output for Authentication](Figures/CFN_output_auth.png)
-![Nested CFN Stack Output for Storage](Figures/CFN_output_storage.png)
+![Nested CFN Stack Output for Authentication](Figures/CFN_output_auth.png =100x)
+![Nested CFN Stack Output for Storage](Figures/CFN_output_storage.png =100x)
 
 Copy the following in aws-exports.js file
 const awsmobile = {
