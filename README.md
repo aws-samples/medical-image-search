@@ -12,17 +12,16 @@
 ### Step 1: Deploy Amplify React Web App
 ![Step1](Figures/step1.jpg)
 
-Install AWS Amplify CLI:  
+1. Install AWS Amplify CLI:  
 `npm install -g @aws-amplify/cli@4.13.2`
 
-[Install AWS Command Line Interface](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html) 
+2. [Install AWS Command Line Interface](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html) 
 
-Configure AWS CLI: `aws configure --profile <Your profile name>` 
+3. Configure AWS CLI: `aws configure --profile <Your profile name>` 
 
-Clone the repository
-`git clone https://github.com/aws-samples/medical-image-search.git`
+4. Clone this repository: `git clone https://github.com/aws-samples/medical-image-search.git`
 
-`cd medical-image-search && amplify init`
+5. Initialize AWS Amplify app: `cd medical-image-search && amplify init`
 
 Answer the questions like:  
 - Enter a name for the project **medical-image-search**  
@@ -39,8 +38,7 @@ Please tell us about your project:
 
 After execution, a new AWS Amplify App will be created with the name provided, e.g. medical-image-search.  
 
-Adding Cognito authentication:  
-`amplify add auth`
+6. Adding Cognito authentication: `amplify add auth`
 
 Answer the question like:
 - Do you want to use the default authentication and security configuration? **Default configuration**  
@@ -48,8 +46,7 @@ Answer the question like:
 - Do you want to configure advanced settings? **No, I am done.**  
 
 
-Adding storage for medical image thumbnail files:  
-`amplify add storage`
+7. Adding storage for medical image thumbnail files: `amplify add storage`
 
 Answer the questions like:
 - Please select from one of the below mentioned services: **Content (Images, audio, video, etc.)**  
@@ -59,9 +56,7 @@ Answer the questions like:
 - What kind of access do you want for Authenticated users? **read** (press space for the selected option)  
 - Do you want to add a Lambda Trigger for your S3 Bucket? **No**  
 
-Deploy the CloudFormation (CFN) template configured above for authentication and storage:  
-`amplify push`
-
+8. Deploy the CloudFormation (CFN) template configured above for authentication and storage: `amplify push`
 
 You will see the following information:  
 | Category | Resource name              | Operation | Provider plugin   |
@@ -70,12 +65,13 @@ You will see the following information:
 | Storage  | public                     | Create    | awscloudformation |
   
 confirm the deployment. After deployment finished, you will see the new cognito user pool and S3 bucket created, plus two nested CFN templetes: one for auth and another for storage. 
+
 Take a note of the followings:
 - Cognito User Pool ID as the Amplify Auth backend. 
 - S3 bucket name as the Amplify Storage backend. 
 Both of them can be found in the Output tab of the correspending CFN nested stack deployment:  
-![Nested CFN Stack Output for Authentication](Figures/CFN_output_auth.png=250x)
-![Nested CFN Stack Output for Storage](Figures/CFN_output_storage.png=250x)
+![Nested CFN Stack Output for Authentication](Figures/CFN_output_auth.png)
+![Nested CFN Stack Output for Storage](Figures/CFN_output_storage.png)
 
 Copy the following in aws-exports.js file
 const awsmobile = {
