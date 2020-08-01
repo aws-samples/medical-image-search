@@ -85,7 +85,10 @@ The following command can build the SageMaker Pytorch inference container and pu
 Alternatively, go to the Container folder and run script to build docker container: `docker build -t sagemaker-pytorch-inference:latest .`, and push docker image to repository, ECR or DockerHub manually. The repository image URI for docker container will be used to deploy Elastic Container Service (ECS) Fargate cluster.  
 ![container image URI](Figures/containerimageURI.png)
 
-3. The inference toolkit is built on [Multi Model Server (MMS)](https://github.com/awslabs/multi-model-server). Follow the guide to [install MMS with pip](https://github.com/awslabs/multi-model-server#installing-multi-model-server-with-pip), required steps are: Prerequisites (make sure you have Java 8 SDK installed), Step 1, and Step3. 
+3. The inference toolkit is built on [Multi Model Server (MMS)](https://github.com/awslabs/multi-model-server). Follow the guide to [install MMS with pip](https://github.com/awslabs/multi-model-server#installing-multi-model-server-with-pip). Required steps are: 
+- Prerequisites: make sure you have Java 8 SDK installed
+- Step 1: install virtualenv and create a virtual environment
+- Step3: install MMS `pip install multi-model-server`
 
 4. Package MMS archive and upload to S3 bucket:
 Once you have MMS command line tool installed and environment activated, go to MMS folder and wrap up your model package. If you have pre-trained a Pytorch inference model, place the model.pth file in this MMS folder before running the following package command:  
