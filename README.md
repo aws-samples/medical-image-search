@@ -110,6 +110,8 @@ Once the CFN deployment finished, go to the AWS console and copy the InferenceAP
 You can delete this CFN stack after the image featurization jobs are finished.
 
 ### Step 3. Deploy data processing pipeline and AppSync backend
+![Step3](Figures/step3.jpg)
+
 The Lambda function (lambda.zip) used to process free text, e.g. radiology report, plus its dpendency layer (python.zip) have been uploaded to the following S3 buckets:
 - medical-image-search-us-east-1
 - medical-image-search-us-west-2
