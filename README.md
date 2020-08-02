@@ -92,7 +92,9 @@ Alternatively, go to the Container folder and run script to build docker contain
 
 4. Package MMS archive and upload to S3 bucket:
 Once you have MMS command line tool installed and environment activated, go to MMS folder and wrap up your model package. If you have pre-trained a Pytorch inference model, place the model.pth file in this MMS folder before running the following package command:  
-`model-archiver -f --model-name dicom_featurization_service --model-path ./ --handler dicom_featurization_service:handle --export-path ./`
+`model-archiver -f --model-name dicom_featurization_service --model-path ./ --handler dicom_featurization_service:handle --export-path ./`. 
+Please follow the instruction on how to use [Model archiver for MMS](https://github.com/awslabs/multi-model-server/tree/master/model-archiver). 
+
 
 Create a S3 bucket and upload the mar package file to that S3 bucket with public read ACL, replacing the following placeholders: S3bucketname and profilename:  
 `aws s3 cp ./dicom_featurization_service.mar s3://<S3bucketname>/ --acl public-read --profile <profilename>`
@@ -128,10 +130,38 @@ Once you have the following resources ready, you can deploy the AppSyncBackend.y
 You can deploy using AWS CLI, go to CloudFormationTemplates folder, copy the following command, and replace the following placeholders: stackname, CFN_output_auth, CFN_output_storage, inferenceAPIUrl, and profilename:  
 `aws cloudformation deploy --capabilities CAPABILITY_NAMED_IAM --template-file ./AppSyncBackend.yaml --stack-name <stackname> --parameter-overrides AuthorizationUserPool=<CFN_output_auth> PNGBucketName=<CFN_output_storage> InferenceEndpointURL=<inferenceAPIUrl> --profile <profilename>`
 
+Once this stack is successfully deployed, you can upload DICOM images to S3 bucket mimic-cxr-dicom-<AccountID> and free text radiology report to S3 bucket mimic-cxr-report-<AccountID>, then you should see the new records created in DynamoDB table medical-image-metadata and ElasticSearch domain medical-image-search. 
 
-Copy the following in aws-exports.js file
-const awsmobile = {
-    "aws_appsync_graphqlEndpoint": "",
-    "aws_appsync_region": "",
-    "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS"
-};
+Copy the AppySync API URL and AWS Region from AWS console:  
+![AppSync API URL](Figures/AppSyncAPIUrl.jpg)
+
+Edit and copy the following in `src/aws-exports.js` file in your working home folder, replace the placeholders with values aforementioned:  
+`const awsmobile = {  
+    "aws_appsync_graphqlEndpoint": "<AppySync API URL>",  
+    "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS" 
+};`. 
+
+You can install dependency and run your react app locally:  
+`npm install & npm start`. 
+
+Or you can publish the react web app by deploying it in S3 with CloudFront distribution:  
+`amplify hosting add`. 
+Answer the questions like:
+- Select the environment setup: **DEV (S3 only with HTTP)**
+- hosting bucket name** medical-image-search-XXXXXXXXXXX-hostingbucket**
+- index doc for the website **index.html**
+- error doc for the website **index.html**
+
+then `amplify publish`
+
+| Category | Resource name              | Operation | Provider plugin   |
+| -------- | -------------------------- | --------- | ----------------- |
+| Hosting  | S3AndCloudFront            | Create    | awscloudformation |
+| Auth     | medicalimagesearchXXXXXXXX | No Change | awscloudformation |
+| Storage  | medicalimages              | No Change | awscloudformation |
+
+
+You will see the Hosting endpoint after deployment. 
+
+Congratulations! You have a medical image search platform ready to use. You download the open data set, e.g. [MIMIC CXR](https://physionet.org/content/mimic-cxr/2.0.0/), or use your own medical images: uploading DICOM images to S3 bucket mimic-cxr-dicom-<AccountID> and free text clinical report to S3 bucket mimic-cxr-report-<AccountID>. Then you will be able search and query them using the react web app.
+
