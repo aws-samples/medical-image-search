@@ -133,7 +133,7 @@ You can deploy using AWS CLI, go to CloudFormationTemplates folder, copy the fol
 Once this stack is successfully deployed, you can upload DICOM images to S3 bucket mimic-cxr-dicom-<AccountID> and free text radiology report to S3 bucket mimic-cxr-report-<AccountID>, then you should see the new records created in DynamoDB table medical-image-metadata and ElasticSearch domain medical-image-search. 
 
 Copy the AppySync API URL and AWS Region from AWS console:  
-![AppSync API URL](Figures/AppSyncAPIUrl.jpg)
+![AppSync API URL](Figures/AppSyncAPIUrl.png)
 
 Edit and copy the following in `src/aws-exports.js` file in your working home folder, replace the placeholders with values aforementioned:  
 `const awsmobile = {  
@@ -142,7 +142,7 @@ Edit and copy the following in `src/aws-exports.js` file in your working home fo
 };`. 
 
 You can install dependency and run your react app locally:  
-`npm install & npm start`. 
+`npm install & npm start`  
 
 Or you can publish the react web app by deploying it in S3 with CloudFront distribution:  
 `amplify hosting add`. 
