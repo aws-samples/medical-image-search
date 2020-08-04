@@ -69,20 +69,18 @@ confirm the deployment. After deployment finished, you will see the new cognito 
 Take a note of the followings:
 - Cognito User Pool ID as the Amplify Auth backend. 
 - S3 bucket name as the Amplify Storage backend. 
-Both of them can be found in the Output tab of the correspending CFN nested stack deployment:  
+Both of them can be found in the Output tab of the corresponding CFN nested stack deployment:  
 ![Nested CFN Stack Output for Authentication](Figures/CFN_output_auth.png)
 ![Nested CFN Stack Output for Storage](Figures/CFN_output_storage.png)=
 
 
-### Step 2 Containerize inference endpoint and Deploy to ECS Fargate
+### Step 2 Deploy the Image Featurization Container to AWS Fargate
 
 1. [Install Docker engine](https://docs.docker.com/engine/install/)
 
-2. Build docker container for image featurization processing
-We use [SageMaker Inference Toolkit](https://github.com/aws/sagemaker-inference-toolkit) to serve the PyTorch inference endpoint. The inference model will convert a DICOM image into a feature vector with size of 1024.  
-The following command can build the SageMaker Pytorch inference container and push it to Elastic Container Registry (ECR): `cd Container/ && ./build_and_push.sh`. 
-
-Alternatively, go to the Container folder and run script to build docker container: `docker build -t sagemaker-pytorch-inference:latest .`, and push docker image to repository, ECR or DockerHub manually. The repository image URI for docker container will be used to deploy Elastic Container Service (ECS) Fargate cluster.  
+2. Build docker container for image featurization processing. 
+We use [SageMaker Inference Toolkit](https://github.com/aws/sagemaker-inference-toolkit) to serve the PyTorch inference model, which will convert a medical image in DICOM format into a feature vector with size of 1024.  
+The following command can build the SageMaker Pytorch inference container and push it to Elastic Container Registry (ECR): `cd container/ && ./build_and_push.sh <profilename>`. Alternatively, go to the container folder and run script to build docker container: `docker build -t sagemaker-pytorch-inference:latest .`, and push docker image to repository, ECR or DockerHub manually. The repository image URI for docker container will be used to deploy Elastic Container Service (ECS) Fargate cluster.  
 ![container image URI](Figures/containerimageURI.png)
 
 3. The inference toolkit is built on [Multi Model Server (MMS)](https://github.com/awslabs/multi-model-server). Follow the guide to [install MMS with pip](https://github.com/awslabs/multi-model-server#installing-multi-model-server-with-pip). Required steps are: 
@@ -96,7 +94,7 @@ Once you have MMS command line tool installed and environment activated, go to M
 Please follow the instruction on how to use [Model archiver for MMS](https://github.com/awslabs/multi-model-server/tree/master/model-archiver). 
 
 
-Create a S3 bucket and upload the mar package file to that S3 bucket with public read ACL, replacing the following placeholders: S3bucketname and profilename:  
+Create a S3 bucket and upload the mar package file to that bucket with public read ACL, replacing the following placeholders: S3bucketname and profilename:  
 `aws s3 cp ./dicom_featurization_service.mar s3://<S3bucketname>/ --acl public-read --profile <profilename>`
 
 5.  Deploy CFN template ecsfargate.yaml for ECS inference endpoint, you will override the following parameters in the CFN tempalte deployment:  
@@ -106,21 +104,19 @@ Create a S3 bucket and upload the mar package file to that S3 bucket with public
 You can deploy using AWS CLI, go to CloudFormationTemplates folder, copy the following command, and replace the following placeholders: stackname, imageURI, S3bucketname, and profilename:  
 `aws cloudformation deploy --capabilities CAPABILITY_IAM --template-file ./ecsfargate.yaml --stack-name <stackname> --parameter-overrides ImageUrl=<imageURI> InferenceModelS3Location=https://<S3bucketname>.s3.amazonaws.com/dicom_featurization_service.mar --profile <profilename>`
 
+Or using 1-click deployment button:
+- US-EAST-1 [![launchstackbutton](Figures/launchstack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/template?stackName=ImageSearchFargateInferenceEndpoint&templateURL=https://medical-image-search-us-east-1.s3.amazonaws.com/ecsfargate.yaml
+)
+- US-WEST-2 [![launchstackbutton](Figures/launchstack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/create/template?stackName=ImageSearchFargateInferenceEndpoint&templateURL=https://medical-image-search-us-west-2.s3-us-west-2.amazonaws.com/ecsfargate.yaml
+)
+
 Once the CFN deployment finished, go to the AWS console and copy the InferenceAPIUrl from the Output tab:  
 ![ECS InferenceAPIUrl](Figures/inferenceAPIUrl.png)
 
 You can delete this CFN stack after the image featurization jobs are finished.
 
-### Step 3. Deploy data processing pipeline and AppSync backend
+### Step 3. Deploy data processing pipeline and AWS AppSync API
 ![Step3](Figures/step3.jpg)
-
-The Lambda function (lambda.zip) used to process free text, e.g. radiology report, plus its dpendency layer (python.zip) have been uploaded to the following S3 buckets:
-- medical-image-search-us-east-1
-- medical-image-search-us-west-2
-
-The uncompressed version of this function is available: LambdaFunctions/CMprocessLambdaFunction.py. You can zip it and upload to your own S3 bucket, and replace the LambdaBucket parameter to your bucket name.
-
-The dependency layer includes the following libraries: boto3-1.12.12, botocore-1.15.12, certifi-2019.11.28, chardet-3.0.4, docutils-0.15.2, elasticsearch-7.5.1, idna-2.8, jmespath-0.9.5, python_dateutil-2.8.1, requests-2.22.0, requests_aws4auth-0.9, s3transfer-0.3.3, six-1.14.0, urllib3-1.25.8.  
 
 Once you have the following resources ready, you can deploy the AppSyncBackend.yaml CFN template.
 - Inference API endpoint Url from Step 2.5 
@@ -128,21 +124,30 @@ Once you have the following resources ready, you can deploy the AppSyncBackend.y
 - S3 bucket as PNGBucketName from Step 1.8
 
 You can deploy using AWS CLI, go to CloudFormationTemplates folder, copy the following command, and replace the following placeholders: stackname, CFN_output_auth, CFN_output_storage, inferenceAPIUrl, and profilename:  
-`aws cloudformation deploy --capabilities CAPABILITY_NAMED_IAM --template-file ./AppSyncBackend.yaml --stack-name <stackname> --parameter-overrides AuthorizationUserPool=<CFN_output_auth> PNGBucketName=<CFN_output_storage> InferenceEndpointURL=<inferenceAPIUrl> --profile <profilename>`
+`aws cloudformation deploy --capabilities CAPABILITY_NAMED_IAM --template-file ./AppSyncBackend.yaml --stack-name <stackname> --parameter-overrides AuthorizationUserPool=<CFN_output_auth> PNGBucketName=<CFN_output_storage> InferenceEndpointURL=<inferenceAPIUrl> --profile <profilename>`   
 
-Once this stack is successfully deployed, you can upload DICOM images to S3 bucket mimic-cxr-dicom-<AccountID> and free text radiology report to S3 bucket mimic-cxr-report-<AccountID>, then you should see the new records created in DynamoDB table medical-image-metadata and ElasticSearch domain medical-image-search. 
+Or using 1-click deployment button:
+- US-EAST-1 [![launchstackbutton](Figures/launchstack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/template?stackName=ImageSearchAppSyncBackend&templateURL=https://medical-image-search-us-east-1.s3.amazonaws.com/AppSyncBackend.yaml
+)
+- US-WEST-2 [![launchstackbutton](Figures/launchstack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/create/template?stackName=ImageSearchAppSyncBackend&templateURL=https://medical-image-search-us-west-2.s3.amazonaws.com/AppSyncBackend.yaml
+)
 
-Copy the AppySync API URL and AWS Region from AWS console:  
+The [Lambda function](https://medical-image-search-us-east-1.s3.amazonaws.com/lambda.zip) for medical image processing, plus [its dependency layer](https://medical-image-search-us-east-1.s3.amazonaws.com/python.zip) can be downloaded separately, if you deploy this stack in AWS regions other than *us-east-1* and *us-west-2*. Given their file size exceeding CFN template limit, you will need to upload them to your own S3 bucket and override the LambdaBucket parameter using your own bucket name. The dependency layer includes the following libraries: boto3-1.12.12, botocore-1.15.12, certifi-2019.11.28, chardet-3.0.4, docutils-0.15.2, elasticsearch-7.5.1, idna-2.8, jmespath-0.9.5, python_dateutil-2.8.1, requests-2.22.0, requests_aws4auth-0.9, s3transfer-0.3.3, six-1.14.0, urllib3-1.25.8.   
+
+Take a note of the AWS AppySync API URL and AWS Region from AWS console:  
 ![AppSync API URL](Figures/AppSyncAPIUrl.png)
 
 Edit and copy the following in `src/aws-exports.js` file in your working home folder, replace the placeholders with values aforementioned:  
-`const awsmobile = {  
-    "aws_appsync_graphqlEndpoint": "<AppySync API URL>",  
-    "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS" 
+`const awsmobile = {   
+    "aws_appsync_graphqlEndpoint": "<AppSync API URL>",   
+    "aws_appsync_region": "<AWS AppSync Region>",   
+    "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS"     
 };`. 
 
-You can install dependency and run your react app locally:  
-`npm install & npm start`  
+Once this CFN stack is successfully deployed, you can download MIMIC CXR data set and upload DICOM files to S3 bucket mimic-cxr-dicom- and free text radiology report to S3 bucket mimic-cxr-report- to trigger the transformation jobs. Then you should see the new records created in DynamoDB table medical-image-metadata and ElasticSearch domain medical-image-search. You will need to obtain access from PhysioNet first.
+
+Finally, you can test the Amplify React Web application locally, by running commands:  
+`npm install & npm start`    
 
 Or you can publish the react web app by deploying it in S3 with CloudFront distribution:  
 `amplify hosting add`. 

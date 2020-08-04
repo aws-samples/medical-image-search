@@ -10,7 +10,6 @@ Parameters:
     Description: A name for the service
   ImageUrl:
     Type: String
-    Default: 749291336608.dkr.ecr.us-west-2.amazonaws.com/sagemaker-pytorch-inference:latest
     Description: The url of a docker image that contains the application process that
                  will handle the traffic for this service
   ContainerCpu:
@@ -45,7 +44,6 @@ Parameters:
     Description: The model name used in API endpoint and container command
   InferenceModelS3Location:
     Type: String 
-    Default: https://qnabot-artifacts-us-west-2.s3-us-west-2.amazonaws.com/dicom_featurization_service.mar
     Description: The S3 location of the inference model package
   ESKNNIndexName:
     Type: String 
