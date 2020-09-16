@@ -201,3 +201,7 @@ You will see the Hosting endpoint after deployment.
 
 Congratulations! You have a medical image search platform ready to use. You download the open data set, e.g. [MIMIC CXR](https://physionet.org/content/mimic-cxr/2.0.0/), or use your own medical images: uploading DICOM images to S3 bucket mimic-cxr-dicom-<AccountID> and free text clinical report to S3 bucket mimic-cxr-report-<AccountID>. Then you will be able search and query them using the react web app.
 
+
+## License
+
+This library is licensed under the MIT-0 License. See the LICENSE file.
