@@ -166,9 +166,13 @@ the same AWS AppSync API endpoint is available in CFN stack Outputs tab:
 Edit and copy the following in `src/aws-exports.js` file in your working home folder, replace the placeholders with values aforementioned:  
 
 `const awsmobile = {   
+
     "aws_appsync_graphqlEndpoint": "<AppSync API URL>",   
+
     "aws_appsync_region": "<AWS AppSync Region>",   
+
     "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS"     
+
 };`. 
 
 Once this CFN stack is successfully deployed, you can download MIMIC CXR data set and upload DICOM files to S3 bucket mimic-cxr-dicom- and free text radiology report to S3 bucket mimic-cxr-report- to trigger the transformation jobs. Then you should see the new records created in DynamoDB table medical-image-metadata and ElasticSearch domain medical-image-search. You will need to obtain access from PhysioNet first.
