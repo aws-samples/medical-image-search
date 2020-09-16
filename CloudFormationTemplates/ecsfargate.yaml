@@ -256,14 +256,24 @@ Resources:
           Action: ['sts:AssumeRole']
       Path: /
       Policies:
-        - PolicyName: s3-es-full-access
+        - PolicyName: s3-es-ddb-access
           PolicyDocument:
             Statement:
             - Effect: Allow
               Action:
-                - 's3:*'
-                - 'es:*'
-                - 'dynamodb:*'
+                - 's3:ListBucket'
+                - 's3:GetObject'
+                - 's3:GetObjectVersion'
+                - 's3:PutObject'
+                - 's3:PutObjectAcl'
+                - 'es:ESHttpGet'
+                - 'es:ESHttpHead'
+                - 'es:ESHttpPost'
+                - 'es:ESHttpPut'
+                - 'es:ESHttpPatch'
+                - 'dynamodb:PutItem'
+                - 'dynamodb:UpdateItem'
+                - 'dynamodb:GetItem'
               Resource: '*'
 
   # The task definition. This is a simple metadata description of what
