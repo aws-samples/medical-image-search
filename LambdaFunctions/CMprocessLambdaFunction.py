@@ -108,4 +108,4 @@ def lambda_handler(event, context):
                 logger.info('ES index create result: {}'.format(json.dumps(retval)))
 
     except Exception as E:
-        logger.error("Error: ",E)
+        logger.error(E)
