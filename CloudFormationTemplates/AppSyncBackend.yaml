@@ -1100,6 +1100,12 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub ${ReportBucketName}-${AWS::AccountId}
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
   ReportLambdaInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -1292,6 +1298,12 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub ${ImageBucketName}-${AWS::AccountId}
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
   ImageLambdaInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
