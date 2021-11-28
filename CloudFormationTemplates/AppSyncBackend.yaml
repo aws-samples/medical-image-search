@@ -25,10 +25,10 @@ Parameters:
     Type: String
     Default: public
     Description: Amplify storage file access levels, e.g. public, protected, private
-  ESDomain:
+  OpenSearchDomainName:
     Type: String
-    Description: Elasticsearch domain name for medical image search 
-    Default: medical-image-search
+    Description: OpenSearch domain name for medical image search 
+    Default: medical-image-open-search
   DDBImageTableName:
     Type: String 
     Description: DynamoDB Table for medical image 
@@ -207,17 +207,17 @@ Resources:
         ReadCapacityUnits: 50
         WriteCapacityUnits: 20
 
-  ### Elasticsearch ###
-  ESSearchDomain:
-    Type: AWS::Elasticsearch::Domain
-    Description: Elasticsearch domain to enable searching of medical image reports
+  ### Opensearch ###
+  OpenSearchDomain:
+    Type: AWS::OpenSearchService::Domain
+    Description: OpenSearchService domain to enable searching of medical image reports
     Properties:
-      DomainName: !Ref ESDomain
-      ElasticsearchVersion: 7.4
-      ElasticsearchClusterConfig:
+      DomainName: !Ref OpenSearchDomainName
+      EngineVersion: Elasticsearch_7.4
+      ClusterConfig:
         InstanceCount: 2
         ZoneAwarenessEnabled: false
-        InstanceType: t2.small.elasticsearch
+        InstanceType: t2.small.search
       EBSOptions:
         EBSEnabled: true
         Iops: 0
@@ -236,7 +236,7 @@ Resources:
               - es:ESHttpGet
               - es:ESHttpPost
               - es:ESHttpPut
-            Resource: !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${ESDomain}/*
+            Resource: !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${OpenSearchDomainName}/*
 
   ### AppSync Data Sources ###
   DDBImageTableDataSource:
@@ -252,17 +252,17 @@ Resources:
         TableName: !Ref DDBImageTable
         AwsRegion: !Sub ${AWS::Region}
   
-  ESDomainDataSource:
+  OSDomainDataSource:
     Type: AWS::AppSync::DataSource
-    DependsOn: ESSearchDomain
+    DependsOn: OpenSearchDomain
     Properties:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
-      Name: !Sub ${APIName}_ES_Report
-      Description: Medical image search AppSync API data source -- Elasticsearch Report Domain
-      Type: AMAZON_ELASTICSEARCH
+      Name: !Sub ${APIName}_OS_Report
+      Description: Medical image search AppSync API data source -- OpenSearchDomain Report Domain
+      Type: AMAZON_OPENSEARCH_SERVICE
       ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
-      ElasticsearchConfig:
-        Endpoint: !Sub https://${ESSearchDomain.DomainEndpoint}
+      OpenSearchServiceConfig:
+        Endpoint: !Sub https://${OpenSearchDomain.DomainEndpoint}
         AwsRegion: !Sub ${AWS::Region}
 
   LambdaDataSource:
@@ -308,7 +308,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getReport
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
             "version": "2017-02-28",
@@ -367,7 +367,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: listReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
             "version": "2017-02-28",
@@ -441,7 +441,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: searchReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
             "version":"2017-02-28",
@@ -475,7 +475,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getPositiveICD10CMs
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -513,7 +513,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getNegativeICD10CMs
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -551,7 +551,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getAllPositiveICD10CMs
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -583,7 +583,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getAllNegativeICD10CMs
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -615,7 +615,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getPositiveICD10CMsbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -652,7 +652,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getNegativeICD10CMsbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -689,7 +689,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getPositiveSignsbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -726,7 +726,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getNegativeSignsbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -763,7 +763,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getPositiveDiagnosesbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -800,7 +800,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getNegativeDiagnosesbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -837,7 +837,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getPositiveSymptomsbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -874,7 +874,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getNegativeSymptomsbyReports
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -929,7 +929,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getPositiveICD10CMsbySimilarReport
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -972,7 +972,7 @@ Resources:
       ApiId: !GetAtt MedicalImageSearchApi.ApiId
       TypeName: Query
       FieldName: getNegativeICD10CMsbySimilarReport
-      DataSourceName: !GetAtt ESDomainDataSource.Name
+      DataSourceName: !GetAtt OSDomainDataSource.Name
       RequestMappingTemplate: |
         {
           "version":"2017-02-28",
@@ -1076,7 +1076,7 @@ Resources:
               - !GetAtt DDBImageTable.Arn
   ESAccessPolicy:
     Type: AWS::IAM::Policy
-    DependsOn: ESSearchDomain
+    DependsOn: OpenSearchDomain
     Properties:
       PolicyName: appsync-medical-image-search-es-policy
       Roles:
@@ -1092,8 +1092,8 @@ Resources:
               - es:ESHttpPost
               - es:ESHttpPut
             Resource:
-              - !Sub ${ESSearchDomain.DomainArn}/*
-              - !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${ESDomain}
+              - !Sub ${OpenSearchDomain.DomainArn}/*
+              - !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${OpenSearchDomainName}
 
   ### Medical Report Bucket and Lambda function ###
   ReportBucket:
@@ -1175,7 +1175,7 @@ Resources:
     Type: AWS::Lambda::Function
     DependsOn: LambdaDependencyLayer
     Properties:
-      Description: a lambda function that transform the free text into searchable named entities using Amazon Comprehend Medical and index them in Elasticsearch
+      Description: a lambda function that transform the free text into searchable named entities using Amazon Comprehend Medical and index them in OpenSearch
       Role: !GetAtt CMprocessLambdaFunctionRole.Arn
       Handler: index.lambda_handler
       Runtime: python3.6
@@ -1186,7 +1186,7 @@ Resources:
       Environment:
         Variables:
           awsregion: !Sub ${AWS::Region}
-          esendpoint: !Sub ${ESSearchDomain.DomainEndpoint}
+          esendpoint: !Sub ${OpenSearchDomain.DomainEndpoint}
           esindex: 'medical-cxr-report'
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", LambdaBucket]
@@ -1359,7 +1359,7 @@ Resources:
   ImageProcessLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Description: a lambda function that process the DICOM image through a image featurization API call index them in Elasticsearch
+      Description: a lambda function that process the DICOM image through a image featurization API call index them in OpenSearch
       Role: !GetAtt ImageProcessLambdaFunctionRole.Arn
       Handler: index.lambda_handler
       Runtime: python3.6
@@ -1371,7 +1371,7 @@ Resources:
           endpoint_url: !Ref InferenceEndpointURL
           destination: !Ref PNGBucketName
           ddbtable: !Ref DDBImageTableName
-          esendpoint: !Sub ${ESSearchDomain.DomainEndpoint}
+          esendpoint: !Sub ${OpenSearchDomain.DomainEndpoint}
           storageaccesslevel: !Ref AmplifyStorageAccessLevel
       Code:
         ZipFile: |
@@ -1432,7 +1432,7 @@ Resources:
       Environment:
         Variables:
           awsregion: !Sub ${AWS::Region}
-          esendpoint: !Sub ${ESSearchDomain.DomainEndpoint}
+          esendpoint: !Sub ${OpenSearchDomain.DomainEndpoint}
           esindex: 'visual-search-knn'
           ddb_table: !Ref DDBImageTableName
           ddb_index: 'ReportId-index'
@@ -1501,8 +1501,8 @@ Outputs:
     Value: !GetAtt MedicalImageSearchApi.ApiId
     Export:
       Name: !Sub "${APIName}-API-ID"
-  ElasticsearchDomain:
-    Description: Elasticsearch Domain
-    Value: !Sub https://${ESSearchDomain.DomainEndpoint}
+  OpenSearchDomain:
+    Description: OpenSearch Domain
+    Value: !Sub https://${OpenSearchDomain.DomainEndpoint}
 
 
