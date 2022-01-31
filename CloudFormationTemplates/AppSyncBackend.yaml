@@ -29,6 +29,15 @@ Parameters:
     Type: String
     Description: OpenSearch domain name for medical image search 
     Default: medical-image-open-search
+  ClusterInstanceType:
+    Type: String 
+    Description: OpenSearch cluster instance type 
+    Default: c5.large.search
+    AllowedValues: [r6gd.16xlarge.search, d2.2xlarge.search, t3.micro.search, m5.large.search, m6g.12xlarge.search, r4.16xlarge.search, t2.micro.search, m4.large.search, m6g.xlarge.search, i3.4xlarge.search, m3.large.search, t3.xlarge.search, r6gd.12xlarge.search, i3.2xlarge.search, ultrawarm1.xlarge.search, m5.4xlarge.search, r6gd.xlarge.search, r6g.8xlarge.search, r6g.large.search, i2.2xlarge.search, r3.xlarge.search, r5.24xlarge.search, r5.large.search, m4.4xlarge.search, r6g.12xlarge.search, r4.8xlarge.search, r4.xlarge.search, r4.large.search, r5.12xlarge.search, m5.2xlarge.search, r6gd.8xlarge.search, r6gd.large.search, r6g.xlarge.search, r3.8xlarge.search, r3.large.search, r5.xlarge.search, m4.2xlarge.search, ultrawarm1.large.search, m3.2xlarge.search, r6g.4xlarge.search, i3.16xlarge.search, t3.large.search, r5.4xlarge.search, m6g.8xlarge.search, m6g.large.search, r4.4xlarge.search, m5.24xlarge.search, m3.xlarge.search, r6gd.4xlarge.search, r6g.2xlarge.search, r3.4xlarge.search, r5.2xlarge.search, m5.12xlarge.search, m4.xlarge.search, r4.2xlarge.search, m5.xlarge.search, m4.10xlarge.search, r6gd.2xlarge.search, i2.xlarge.search, r3.2xlarge.search, m6g.4xlarge.search, i3.xlarge.search, t3.2xlarge.search, c5.18xlarge.search, m6g.2xlarge.search, t2.medium.search, t3.medium.search, d2.xlarge.search, ultrawarm1.medium.search, t3.nano.search, c6g.8xlarge.search, c6g.large.search, t4g.small.search, c4.xlarge.search, c5.9xlarge.search, c5.xlarge.search, c5.large.search, c6g.12xlarge.search, c4.8xlarge.search, c4.large.search, c6g.4xlarge.search, c6g.xlarge.search, m3.medium.search, t4g.medium.search, c6g.2xlarge.search, d2.8xlarge.search, c5.4xlarge.search, c4.4xlarge.search, c5.2xlarge.search, c4.2xlarge.search, t3.small.search, i3.8xlarge.search, i3.large.search, d2.4xlarge.search, t2.small.search] 
+  EBSVolumeSize:
+    Type: String
+    Description: Opensearch cluster EBS volume
+    Default: 20
   DDBImageTableName:
     Type: String 
     Description: DynamoDB Table for medical image 
@@ -217,11 +226,10 @@ Resources:
       ClusterConfig:
         InstanceCount: 2
         ZoneAwarenessEnabled: false
-        InstanceType: t2.small.search
+        InstanceType: !Ref ClusterInstanceType
       EBSOptions:
         EBSEnabled: true
-        Iops: 0
-        VolumeSize: 10
+        VolumeSize: !Ref EBSVolumeSize
         VolumeType: gp2
       AccessPolicies: 
         Version: 2012-10-17
